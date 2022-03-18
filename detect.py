@@ -48,14 +48,14 @@ from utils.torch_utils import select_device, time_sync
 
 
 @torch.no_grad()
-def run(weights=ROOT / 'yolov5x.pt',  # model.pt path(s)
+def run(weights=ROOT / 'yolov5x6.pt',  # model.pt path(s)
         source=ROOT / 'data/images',  # file/dir/URL/glob, 0 for webcam
-        data=ROOT / 'data/Objects365.yaml',  # dataset.yaml path
+        data=ROOT / 'data/coco.yaml',  # dataset.yaml path
         imgsz=(550, 550),  # inference size (height, width)
         conf_thres=0.25,  # confidence threshold
         iou_thres=0.45,  # NMS IOU threshold
         max_det=800,  # maximum detections per image
-        device='8',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
+        device='15',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
         view_img=False,  # show results
         save_txt=False,  # save results to *.txt
         save_conf=False,  # save confidences in --save-txt labels
