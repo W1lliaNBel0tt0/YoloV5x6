@@ -3,7 +3,7 @@
 Validate a trained YOLOv5 model accuracy on a custom dataset
 
 Usage:
-    $ python path/to/val.py --weights yolov5s.pt --data coco128.yaml --img 320
+    $ python path/to/val.py --weights yolov5s.tflite --data coco128.yaml --img 320
 
 Usage - formats:
     $ python path/to/val.py --weights yolov5s.pt                 # PyTorch
@@ -100,7 +100,7 @@ def run(data,
         conf_thres=0.001,  # confidence threshold
         iou_thres=0.6,  # NMS IoU threshold
         task='val',  # train, val, test, speed or study
-        device='',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
+        device='3',  # cuda device, i.e. 0 or 0,1,2,3 or cpu
         workers=8,  # max dataloader workers (per RANK in DDP mode)
         single_cls=False,  # treat as single-class dataset
         augment=False,  # augmented inference
