@@ -48,9 +48,9 @@ from utils.torch_utils import select_device, time_sync
 
 
 @torch.no_grad()
-def run(weights=ROOT / 'yolov5x6.pt',  # model.pt path(s)
+def run(weights=ROOT / 'yolov5s.pt',  # model.pt path(s)
         source=ROOT / 'data/images',  # file/dir/URL/glob, 0 for webcam
-        data=ROOT / 'data/yolov5x6.yaml',  # dataset.yaml path
+        data=ROOT / 'data/yolov5s.yaml',  # dataset.yaml path
         imgsz=(1920, 1920),  # inference size (height, width)
         conf_thres=0.55,  # confidence threshold
         iou_thres=0.55,  # NMS IOU threshold
