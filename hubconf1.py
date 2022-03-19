@@ -4,8 +4,8 @@ PyTorch Hub models https://pytorch.org/hub/ultralytics_yolov5/
 
 Usage:
     import torch
-    model = torch.hub.load('ultralytics/yolov5', 'yolov5s')
-    model = torch.hub.load('ultralytics/yolov5:master', 'custom', 'path/to/yolov5s.onnx')  # file from branch
+    model = torch.hub.load('ultralytics/yolov5', 'yolov5n')
+    model = torch.hub.load('ultralytics/yolov5:master', 'custom', 'path/to/yolov5n.onnx')  # file from branch
 """
 
 import torch
@@ -121,7 +121,7 @@ def yolov5x6(pretrained=True, channels=3, classes=80, autoshape=True, verbose=Tr
 
 
 if __name__ == '__main__':
-    model = _create(name='yolov5s', pretrained=True, channels=3, classes=80, autoshape=True, verbose=True)  # pretrained
+    model = _create(name='yolov5n', pretrained=True, channels=3, classes=80, autoshape=True, verbose=True)  # pretrained
     # model = custom(path='path/to/model.pt')  # custom
 
     # Verify inference
