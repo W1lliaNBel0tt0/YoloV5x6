@@ -115,13 +115,13 @@ def yolov5l6(pretrained=True, channels=3, classes=80, autoshape=True, verbose=Tr
     return _create('yolov5l6', pretrained, channels, classes, autoshape, verbose, device)
 
 
-def yolov5x6(pretrained=True, channels=3, classes=80, autoshape=True, verbose=True, device=None):
+def yolov5x6(pretrained=True, channels=1, classes=80, autoshape=True, verbose=True, device=None):
     # YOLOv5-xlarge-P6 model https://github.com/ultralytics/yolov5
     return _create('yolov5x6', pretrained, channels, classes, autoshape, verbose, device)
 
 
 if __name__ == '__main__':
-    model = _create(name='yolov5s', pretrained=True, channels=12, classes=80, autoshape=True, verbose=True)  # pretrained
+    model = _create(name='yolov5x6', pretrained=True, channels=1, classes=80, autoshape=True, verbose=True)  # pretrained
     # model = custom(path='path/to/model.pt')  # custom
 
     # Verify inference
