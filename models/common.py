@@ -513,7 +513,7 @@ class AutoShape(nn.Module):
         return self
 
     @torch.no_grad()
-    def forward(self, imgs, size=1280, augment=False, profile=False):
+    def forward(self, imgs, size=128, augment=False, profile=False):
         # Inference from various sources. For height=640, width=1280, RGB images example inputs are:
         #   file:       imgs = 'data/images/zidane.jpg'  # str or PosixPath
         #   URI:             = 'https://ultralytics.com/images/zidane.jpg'
