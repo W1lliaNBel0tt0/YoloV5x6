@@ -1,396 +1,228 @@
-import cv2
-import time
-
-import torch
-import torchvision
-import torch.nn.functional as F
-
-import os, time
+import tensorflow as tf
 import numpy as np
-from tqdm import tqdm
+import cv2
+import math
 
-#加载data
-def load_datafile(data_path):
-    #需要配置的超参数
-    cfg = {"model_name":None,
-    
-           "epochs": None,
-           "steps": None,           
-           "batch_size": None,
-           "subdivisions":None,
-           "learning_rate": None,
+'''
+DIoU:
+    IoU - (EU_dis(gt_c, pred_c)^2) / c^2
+    gt_c : ground truth box center
+    pred_c : predict box center
+    c : diagonal length of the smallest enclosing box covering the two boxes.
 
-           "pre_weights": None,        
-           "classes": None,
-           "width": None,
-           "height": None,           
-           "anchor_num": None,
-           "anchors": None,
+CIoU:
+    IoU - DIou - alpha*v
+'''
+'''
+一張圖有N個bounding box，使用多個anchors配對的情況下，會有K個配對成功。
+計算K個pred bounding box 與 ground truth bounding box的IoU，
+可看成每個預測的bounding與全部ground truth bounding box算IoU後取最大值。
+'''
+def box_iou(box_1, box_2):
+    '''
+    Args:
+         box_1(i.e., y_pred box): (K, (xmin, ymin, xmax, ymax))
+         box_2(i.e., y_true box): (N, (xmin, ymin, xmax, ymax))
 
-           "val": None,           
-           "train": None,
-           "names":None
-        }
+    return:
+         iou: (k,), iou ratio
+    '''
 
-    assert os.path.exists(data_path), "请指定正确配置.data文件路径"
+    #增加維度，用來利用broadcasting機制
+    #box_1 shape -> (K, 1, 4)
+    box_1 = tf.expand_dims(box_1, -2)
+    #box_2 shape -> (1, N, 4)
+    box_2 = tf.expand_dims(box_2, 0)
 
-    #指定配置项的类型
-    list_type_key = ["anchors", "steps"]
-    str_type_key = ["model_name", "val", "train", "names", "pre_weights"]
-    int_type_key = ["epochs", "batch_size", "classes", "width",
-                   "height", "anchor_num", "subdivisions"]
-    float_type_key = ["learning_rate"]
-    
-    #加载配置文件
-    with open(data_path, 'r') as f:
-        for line in f.readlines():
-            if line == '\n' or line[0] == "[":
-                continue
-            else:
-                data = line.strip().split("=")
-                #配置项类型转换
-                if data[0] in cfg:
-                    if data[0] in int_type_key:
-                       cfg[data[0]] = int(data[1])
-                    elif data[0] in str_type_key:
-                        cfg[data[0]] = data[1]
-                    elif data[0] in float_type_key:
-                        cfg[data[0]] = float(data[1])
-                    elif data[0] in list_type_key:
-                        cfg[data[0]] = [float(x) for x in data[1].split(",")]
-                    else:
-                        print("配置文件有错误的配置项")
-                else:
-                    print("%s配置文件里有无效配置项:%s"%(data_path, data))
-    return cfg
+    #計算IOU
+    intersect_mins = tf.maximum(box_1[...,0:2], box_2[...,0:2])
+    intersect_maxes = tf.minimum(box_1[...,2:4], box_2[...,2:4])
+    intersect_wh = tf.maximum(intersect_maxes - intersect_mins, 0.)
+    intersect_area = intersect_wh[..., 0] * intersect_wh[..., 1]
+    box_1_area = (box_1[..., 2] - box_1[..., 0]) * (box_1[..., 3] - box_1[..., 1])
+    box_2_area = (box_2[..., 2] - box_2[..., 0]) * (box_2[..., 3] - box_2[..., 1])
 
-def xywh2xyxy(x):
-    # Convert nx4 boxes from [x, y, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
-    y = torch.zeros_like(x) if isinstance(x, torch.Tensor) else np.zeros_like(x)
-    y[:, 0] = x[:, 0] - x[:, 2] / 2  # top left x
-    y[:, 1] = x[:, 1] - x[:, 3] / 2  # top left y
-    y[:, 2] = x[:, 0] + x[:, 2] / 2  # bottom right x
-    y[:, 3] = x[:, 1] + x[:, 3] / 2  # bottom right y
-    return y
-
-def bbox_iou(box1, box2, x1y1x2y2=True):
-    """
-    Returns the IoU of two bounding boxes
-    """
-    if not x1y1x2y2:
-        # Transform from center and width to exact coordinates
-        b1_x1, b1_x2 = box1[:, 0] - box1[:, 2] / 2, box1[:, 0] + box1[:, 2] / 2
-        b1_y1, b1_y2 = box1[:, 1] - box1[:, 3] / 2, box1[:, 1] + box1[:, 3] / 2
-        b2_x1, b2_x2 = box2[:, 0] - box2[:, 2] / 2, box2[:, 0] + box2[:, 2] / 2
-        b2_y1, b2_y2 = box2[:, 1] - box2[:, 3] / 2, box2[:, 1] + box2[:, 3] / 2
-    else:
-        # Get the coordinates of bounding boxes
-        b1_x1, b1_y1, b1_x2, b1_y2 = \
-            box1[:, 0], box1[:, 1], box1[:, 2], box1[:, 3]
-        b2_x1, b2_y1, b2_x2, b2_y2 = \
-            box2[:, 0], box2[:, 1], box2[:, 2], box2[:, 3]
-
-    # get the corrdinates of the intersection rectangle
-    inter_rect_x1 = torch.max(b1_x1, b2_x1)
-    inter_rect_y1 = torch.max(b1_y1, b2_y1)
-    inter_rect_x2 = torch.min(b1_x2, b2_x2)
-    inter_rect_y2 = torch.min(b1_y2, b2_y2)
-    # Intersection area
-    inter_area = torch.clamp(inter_rect_x2 - inter_rect_x1 + 1, min=0) * torch.clamp(
-        inter_rect_y2 - inter_rect_y1 + 1, min=0
-    )
-    # Union Area
-    b1_area = (b1_x2 - b1_x1 + 1) * (b1_y2 - b1_y1 + 1)
-    b2_area = (b2_x2 - b2_x1 + 1) * (b2_y2 - b2_y1 + 1)
-
-    iou = inter_area / (b1_area + b2_area - inter_area + 1e-16)
+    iou = intersect_area / (box_1_area + box_2_area - intersect_area)
+    iou = tf.math.reduce_max(iou, axis=1)
 
     return iou
 
-def compute_ap(recall, precision):
-    """ Compute the average precision, given the recall and precision curves.
-    Code originally from https://github.com/rbgirshick/py-faster-rcnn.
+def box_diou(box_1, box_2):
+    '''
+    Args:
+         box_1(i.e., y_pred box): (K, (xmin, ymin, xmax, ymax))
+         box_2(i.e., y_true box): (N, (xmin, ymin, xmax, ymax))
 
-    # Arguments
-        recall:    The recall curve (list).
-        precision: The precision curve (list).
-    # Returns
-        The average precision as computed in py-faster-rcnn.
-    """
-    # correct AP calculation
-    # first append sentinel values at the end
-    mrec = np.concatenate(([0.0], recall, [1.0]))
-    mpre = np.concatenate(([0.0], precision, [0.0]))
+    return:
+         iou: (k,), iou ratio
+    '''
 
-    # compute the precision envelope
-    for i in range(mpre.size - 1, 0, -1):
-        mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
+    #增加維度，用來利用broadcasting機制
+    #box_1 shape -> (K, 1, 4)
+    box_1 = tf.expand_dims(box_1, -2)
+    #box_2 shape -> (1, N, 4)
+    box_2 = tf.expand_dims(box_2, 0)
 
-    # to calculate area under PR curve, look for points
-    # where X axis (recall) changes value
-    i = np.where(mrec[1:] != mrec[:-1])[0]
+    box_1_cen = tf.concat([(box_1[...,2:3] + box_1[...,0:1]) / 2,
+                           (box_1[...,3:4] + box_1[...,1:2]) / 2],
+                          axis=-1)
 
-    # and sum (\Delta recall) * prec
-    ap = np.sum((mrec[i + 1] - mrec[i]) * mpre[i + 1])
-    return ap
-
-def ap_per_class(tp, conf, pred_cls, target_cls):
-    """ Compute the average precision, given the recall and precision curves.
-    Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
-    # Arguments
-        tp:    True positives (list).
-        conf:  Objectness value from 0-1 (list).
-        pred_cls: Predicted object classes (list).
-        target_cls: True object classes (list).
-    # Returns
-        The average precision as computed in py-faster-rcnn.
-    """
-
-    # Sort by objectness
-    i = np.argsort(-conf)
-    tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
-
-    # Find unique classes
-    unique_classes = np.unique(target_cls)
-
-    # Create Precision-Recall curve and compute AP for each class
-    ap, p, r = [], [], []
-    for c in unique_classes:
-        i = pred_cls == c
-        n_gt = (target_cls == c).sum()  # Number of ground truth objects
-        n_p = i.sum()  # Number of predicted objects
-
-        if n_p == 0 and n_gt == 0:
-            continue
-        elif n_p == 0 or n_gt == 0:
-            ap.append(0)
-            r.append(0)
-            p.append(0)
-        else:
-            # Accumulate FPs and TPs
-            fpc = (1 - tp[i]).cumsum()
-            tpc = (tp[i]).cumsum()
-
-            # Recall
-            recall_curve = tpc / (n_gt + 1e-16)
-            r.append(recall_curve[-1])
-
-            # Precision
-            precision_curve = tpc / (tpc + fpc)
-            p.append(precision_curve[-1])
-
-            # AP from recall-precision curve
-            ap.append(compute_ap(recall_curve, precision_curve))
-
-    # Compute F1 score (harmonic mean of precision and recall)
-    p, r, ap = np.array(p), np.array(r), np.array(ap)
-    f1 = 2 * p * r / (p + r + 1e-16)
-
-    return np.mean(p), np.mean(r), np.mean(ap), np.mean(f1)
-
-def get_batch_statistics(outputs, targets, iou_threshold, device):
-    """ Compute true positives, predicted scores and predicted labels per sample """
-    batch_metrics = []
-    for sample_i in range(len(outputs)):
-
-        if outputs[sample_i] is None:
-            continue
-
-        output = outputs[sample_i]
-        pred_boxes = output[:, :4]
-        pred_scores = output[:, 4]
-        pred_labels = output[:, -1]
-
-        true_positives = np.zeros(pred_boxes.shape[0])
-
-        annotations = targets[targets[:, 0] == sample_i][:, 1:]
-        target_labels = annotations[:, 0] if len(annotations) else []
-        if len(annotations):
-            detected_boxes = []
-            target_boxes = annotations[:, 1:]
-
-            for pred_i, (pred_box, pred_label) in enumerate(zip(pred_boxes, pred_labels)):
-                
-                pred_box = pred_box.to(device)
-                pred_label = pred_label.to(device)
-
-                # If targets are found break
-                if len(detected_boxes) == len(annotations):
-                    break
-
-                # Ignore if label is not one of the target labels
-                if pred_label.to(device) not in target_labels:
-                    continue
-
-                iou, box_index = bbox_iou(pred_box.unsqueeze(0), target_boxes).max(0)
-                if iou >= iou_threshold and box_index not in detected_boxes:
-                    true_positives[pred_i] = 1
-                    detected_boxes += [box_index]
-        batch_metrics.append([true_positives, pred_scores, pred_labels])
-    return batch_metrics
-
-def non_max_suppression(prediction, conf_thres=0.3, iou_thres=0.45, classes=None):
-    """Performs Non-Maximum Suppression (NMS) on inference results
-    Returns:
-         detections with shape: nx6 (x1, y1, x2, y2, conf, cls)
-    """
-
-    nc = prediction.shape[2] - 5  # number of classes
-
-    # Settings
-    # (pixels) minimum and maximum box width and height
-    max_wh = 4096
-    max_det = 300  # maximum number of detections per image
-    max_nms = 30000  # maximum number of boxes into torchvision.ops.nms()
-    time_limit = 1.0  # seconds to quit after
-    multi_label = nc > 1  # multiple labels per box (adds 0.5ms/img)
-
-    t = time.time()
-    output = [torch.zeros((0, 6), device="cpu")] * prediction.shape[0]
-
-    for xi, x in enumerate(prediction):  # image index, image inference
-        # Apply constraints
-        # x[((x[..., 2:4] < min_wh) | (x[..., 2:4] > max_wh)).any(1), 4] = 0  # width-height
-        x = x[x[..., 4] > conf_thres]  # confidence
-
-        # If none remain process next image
-        if not x.shape[0]:
-            continue
-
-        # Compute conf
-        x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
-
-        # Box (center x, center y, width, height) to (x1, y1, x2, y2)
-        box = xywh2xyxy(x[:, :4])
-
-        # Detections matrix nx6 (xyxy, conf, cls)
-        conf, j = x[:, 5:].max(1, keepdim=True)
-        x = torch.cat((box, conf, j.float()), 1)[conf.view(-1) > conf_thres]
-
-        # Filter by class
-        if classes is not None:
-            x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
-
-        # Check shape
-        n = x.shape[0]  # number of boxes
-        if not n:  # no boxes
-            continue
-        elif n > max_nms:  # excess boxes
-            # sort by confidence
-            x = x[x[:, 4].argsort(descending=True)[:max_nms]]
-
-        # Batched NMS
-        c = x[:, 5:6] * max_wh  # classes
-        # boxes (offset by class), scores
-        boxes, scores = x[:, :4] + c, x[:, 4]
-        i = torchvision.ops.nms(boxes, scores, iou_thres)  # NMS
-        if i.shape[0] > max_det:  # limit detections
-            i = i[:max_det]
-
-        output[xi] = x[i].detach().cpu()
-
-        if (time.time() - t) > time_limit:
-            print(f'WARNING: NMS time limit {time_limit}s exceeded')
-            break  # time limit exceeded
-
-    return output
-
-def make_grid(h, w, cfg, device):
-    hv, wv = torch.meshgrid([torch.arange(h), torch.arange(w)])
-    return torch.stack((wv, hv), 2).repeat(1,1,3).reshape(h, w, cfg["anchor_num"], -1).to(device)
-
-#特征图后处理
-def handel_preds(preds, cfg, device):
-    #加载anchor配置
-    anchors = np.array(cfg["anchors"])
-    anchors = torch.from_numpy(anchors.reshape(len(preds) // 3, cfg["anchor_num"], 2)).to(device)
-
-    output_bboxes = []
-    layer_index = [0, 0, 0, 1, 1, 1]
-
-    for i in range(len(preds) // 3):
-        bacth_bboxes = []
-        reg_preds = preds[i * 3]
-        obj_preds = preds[(i * 3) + 1]
-        cls_preds = preds[(i * 3) + 2]
-
-        for r, o, c in zip(reg_preds, obj_preds, cls_preds):
-            r = r.permute(1, 2, 0)
-            r = r.reshape(r.shape[0], r.shape[1], cfg["anchor_num"], -1)
-
-            o = o.permute(1, 2, 0)
-            o = o.reshape(o.shape[0], o.shape[1], cfg["anchor_num"], -1)
-
-            c = c.permute(1, 2, 0)
-            c = c.reshape(c.shape[0],c.shape[1], 1, c.shape[2])
-            c = c.repeat(1, 1, 3, 1)
-
-            anchor_boxes = torch.zeros(r.shape[0], r.shape[1], r.shape[2], r.shape[3] + c.shape[3] + 1)
-
-            #计算anchor box的cx, cy
-            grid = make_grid(r.shape[0], r.shape[1], cfg, device)
-            stride = cfg["height"] /  r.shape[0]
-            anchor_boxes[:, :, :, :2] = ((r[:, :, :, :2].sigmoid() * 2. - 0.5) + grid) * stride
-
-            #计算anchor box的w, h
-            anchors_cfg = anchors[i]
-            anchor_boxes[:, :, :, 2:4] = (r[:, :, :, 2:4].sigmoid() * 2) ** 2 * anchors_cfg # wh
-
-            #计算obj分数
-            anchor_boxes[:, :, :, 4] = o[:, :, :, 0].sigmoid()
-
-            #计算cls分数
-            anchor_boxes[:, :, :, 5:] = F.softmax(c[:, :, :, :], dim = 3)
-
-            #torch tensor 转为 numpy array
-            anchor_boxes = anchor_boxes.cpu().detach().numpy() 
-            bacth_bboxes.append(anchor_boxes)     
-
-        #n, anchor num, h, w, box => n, (anchor num*h*w), box
-        bacth_bboxes = torch.from_numpy(np.array(bacth_bboxes))
-        bacth_bboxes = bacth_bboxes.view(bacth_bboxes.shape[0], -1, bacth_bboxes.shape[-1]) 
-
-        output_bboxes.append(bacth_bboxes)    
-        
-    #merge
-    output = torch.cat(output_bboxes, 1)
-            
-    return output
-
-#模型评估
-def evaluation(val_dataloader, cfg, model, device, conf_thres = 0.01, nms_thresh = 0.4, iou_thres = 0.5):
-
-    labels = []
-    sample_metrics = []  # List of tuples (TP, confs, pred)
-    pbar = tqdm(val_dataloader)
-
-    for imgs, targets in pbar:
-        imgs = imgs.to(device).float() / 255.0
-        targets = targets.to(device)       
-
-        # Extract labels
-        labels += targets[:, 1].tolist()
-        # Rescale target
-        targets[:, 2:] = xywh2xyxy(targets[:, 2:])
-        targets[:, 2:] *= torch.tensor([cfg["width"], cfg["height"], cfg["width"], cfg["height"]]).to(device)
-
-        #对预测的anchorbox进行nms处理
-        with torch.no_grad():
-            preds = model(imgs)
-
-            #特征图后处理:生成anchorbox
-            output = handel_preds(preds, cfg, device)
-            output_boxes = non_max_suppression(output, conf_thres = conf_thres, iou_thres = nms_thresh)
-
-        sample_metrics += get_batch_statistics(output_boxes, targets, iou_thres, device)
-        pbar.set_description("Evaluation model:") 
-
-    if len(sample_metrics) == 0:  # No detections over whole validation set.
-        print("---- No detections over whole validation set ----")
-        return None
-
-    # Concatenate sample statistics
-    true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_metrics))]
-    metrics_output = ap_per_class(true_positives, pred_scores, pred_labels, labels)
+    box_2_cen = tf.concat([(box_2[...,2:3] + box_2[...,0:1]) / 2,
+                           (box_2[...,3:4] + box_2[...,1:2]) / 2],
+                          axis=-1)
     
-    return metrics_output     
+    #兩個中心點的EU dis square
+    rho_s = tf.math.reduce_sum(tf.math.square(box_1_cen - box_2_cen), -1)
+
+    #對角線距離
+    dia_mins = tf.minimum(box_1[...,0:2], box_2[...,0:2])
+    dia_maxes = tf.maximum(box_1[...,2:4], box_2[...,2:4])
+
+    regu = tf.math.divide_no_nan(rho_s, tf.math.reduce_sum(tf.math.square(dia_maxes - dia_mins), -1))
+
+    #計算IOU
+    intersect_mins = tf.maximum(box_1[...,0:2], box_2[...,0:2])
+    intersect_maxes = tf.minimum(box_1[...,2:4], box_2[...,2:4])
+    intersect_wh = tf.maximum(intersect_maxes - intersect_mins, 0.)
+    intersect_area = intersect_wh[..., 0] * intersect_wh[..., 1]
+    box_1_area = (box_1[..., 2] - box_1[..., 0]) * (box_1[..., 3] - box_1[..., 1])
+    box_2_area = (box_2[..., 2] - box_2[..., 0]) * (box_2[..., 3] - box_2[..., 1])
+
+    iou = intersect_area / (box_1_area + box_2_area - intersect_area)
+    diou = iou - regu
+    diou = tf.math.reduce_max(diou, axis=1)
+
+    return tf.clip_by_value(diou, 0, 1)
+
+def box_ciou(box_1, box_2):
+    '''
+    Args:
+         box_1(i.e., y_pred box): (K, (xmin, ymin, xmax, ymax))
+         box_2(i.e., y_true box): (N, (xmin, ymin, xmax, ymax))
+
+    return:
+         iou: (k,), iou ratio
+    '''
+    #增加維度，用來利用broadcasting機制
+    #box_1 shape -> (K, 1, 4)
+    box_1 = tf.expand_dims(box_1, -2)
+    #box_2 shape -> (1, N, 4)
+    box_2 = tf.expand_dims(box_2, 0)
+
+    box_1_cen = tf.concat([(box_1[...,2:3] + box_1[...,0:1]) / 2,
+                           (box_1[...,3:4] + box_1[...,1:2]) / 2],
+                          axis=-1)
+
+    box_2_cen = tf.concat([(box_2[...,2:3] + box_2[...,0:1]) / 2,
+                           (box_2[...,3:4] + box_2[...,1:2]) / 2],
+                          axis=-1)
+    
+    #兩個中心點的EU dis square
+    rho_s = tf.math.reduce_sum(tf.math.square(box_1_cen - box_2_cen), -1)
+
+    #對角線距離
+    dia_mins = tf.minimum(box_1[...,0:2], box_2[...,0:2])
+    dia_maxes = tf.maximum(box_1[...,2:4], box_2[...,2:4])
+
+    regu = tf.math.divide_no_nan(rho_s, tf.math.reduce_sum(tf.math.square(dia_maxes - dia_mins), -1))
+
+    box_1_wh = tf.concat([box_1[...,2:3] - box_1[...,0:1], box_1[...,3:4] - box_1[...,1:2]], -1)
+    box_2_wh = tf.concat([box_2[...,2:3] - box_2[...,0:1], box_2[...,3:4] - box_2[...,1:2]], -1)
+
+    box_1_ratio = tf.math.divide_no_nan(box_1_wh[...,0], box_1_wh[...,1])
+    box_2_ratio = tf.math.divide_no_nan(box_2_wh[...,0], box_2_wh[...,1])
+    
+    #計算IOU
+    intersect_mins = tf.maximum(box_1[...,0:2], box_2[...,0:2])
+    intersect_maxes = tf.minimum(box_1[...,2:4], box_2[...,2:4])
+    intersect_wh = tf.maximum(intersect_maxes - intersect_mins, 0.)
+    intersect_area = intersect_wh[..., 0] * intersect_wh[..., 1]
+    box_1_area = (box_1[..., 2] - box_1[..., 0]) * (box_1[..., 3] - box_1[..., 1])
+    box_2_area = (box_2[..., 2] - box_2[..., 0]) * (box_2[..., 3] - box_2[..., 1])
+
+    iou = intersect_area / (box_1_area + box_2_area - intersect_area)
+    v = 4 / (math.pi**2) * tf.math.square(tf.math.atan(box_1_ratio) - tf.math.atan(box_2_ratio))
+    alpha = tf.math.divide_no_nan(v ,(1 - iou) + v)
+    ciou = iou - regu - alpha
+    ciou = tf.math.reduce_max(ciou, axis=1)
+
+    return tf.clip_by_value(ciou, 0, 1)
+
+def preprocess_true_boxes(true_boxes, **kwargs):
+    '''
+    Args:
+        true_boxes:(N, (xmin, ymin, xmax, ymax, cls index))
+    '''
+    true_boxes = true_boxes.astype(np.float32)
+    #input shape(h, w)
+    input_shape = np.array(kwargs['image_shape'], dtype='int32')
+    #類別總數
+    num_classes = kwargs['num_classes']
+    anchors = np.array(kwargs['anchors'])
+    anchors_mask = kwargs['anchors_mask']
+    #每一層輸出的anchors數量
+    anc_pre_l = len(anchors) // 3
+    #w,h值
+    boxes_wh = true_boxes[..., 2:4] - true_boxes[..., 0:2]
+    
+    #3個輸出層的feature map大小
+    grid_shapes = [input_shape // {0:8, 1:16, 2:32}[l] for l in range(3)]
+    #初始化y_true
+    y_true = [np.zeros((grid_shapes[l][0], grid_shapes[l][1], anc_pre_l, 5+num_classes),
+              dtype='float32') for l in range(3)]
+
+    #增加anchors dimension，以便使用broadcasting
+    anchors = np.expand_dims(anchors, 0)
+    #ground truth boxes 與 anchors 算IOU，這邊看成所有box中心點為(0,0)算IoU。
+    anchor_maxes = anchors / 2.
+    anchor_mins = -anchor_maxes
+
+    #清除標記錯誤的data
+    valid_mask_w = boxes_wh[...,0] > 0
+    valid_mask_h = boxes_wh[...,1] > 0
+    valid_mask = valid_mask_w * valid_mask_h
+    boxes_wh = boxes_wh[valid_mask]
+    true_boxes = true_boxes[valid_mask]
+
+    #x,y中心點
+    boxes_xy = (true_boxes[..., 0:2] + true_boxes[..., 2:4]) / 2
+    boxes_xy = boxes_xy / input_shape[::-1]
+
+    #增加dimension，方便使用broadcasting
+    boxes_wh = np.expand_dims(boxes_wh, -2)
+    box_maxes = boxes_wh / 2.
+    box_mins = -box_maxes
+
+    #計算IOU
+    intersect_mins = np.maximum(box_mins, anchor_mins)
+    intersect_maxes = np.minimum(box_maxes, anchor_maxes)
+    intersect_wh = np.maximum(intersect_maxes - intersect_mins, 0.)
+    intersect_area = intersect_wh[...,0] * intersect_wh[...,1]
+    box_area = boxes_wh[...,0] * boxes_wh[...,1]
+    anchor_area = anchors[...,0] * anchors[...,1]
+    iou = intersect_area / (box_area + anchor_area - intersect_area)
+
+    #Multiple anchors for ground truth
+    anchor_list = []
+    for i in iou:
+        anchor_list.append(np.argwhere(i > 0.213))
+    #將label置入y_true中
+    for box_ind, anchor in enumerate(anchor_list):
+        #根據每個anchor放入對應值
+        for i in anchor:
+            #anchor 對應的輸出層
+            out_level = int(i // 3)
+            #anchor 對應的編號
+            anchor_ind = int(i % anc_pre_l)
+            i = np.floor(boxes_xy[box_ind, 0]*grid_shapes[out_level][1]).astype('int32')
+            j = np.floor(boxes_xy[box_ind, 1]*grid_shapes[out_level][0]).astype('int32')
+            c = true_boxes[box_ind, 4].astype('int32')
+            y_true[out_level][j, i, anchor_ind, 0:4] = true_boxes[box_ind, 0:4]
+            y_true[out_level][j, i, anchor_ind, 4] = 1
+            y_true[out_level][j, i, anchor_ind, 5 + c] = 1
+    
+    #reshape對應到model輸出
+    for i in range(3):
+        y_true[i] = np.reshape(y_true[i], (-1, (num_classes + 5)))
+    
+    return np.vstack([y_true[0], y_true[1], y_true[2]])
