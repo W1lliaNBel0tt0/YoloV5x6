@@ -138,6 +138,6 @@ if __name__ == '__main__':
             Image.open('data/images/bus.jpg'),  # PIL
             np.zeros((320, 640, 3))]  # numpy
 
-    results = model(imgs, size=160)  # batched inference
+    results = model(imgs, size=10)  # batched inference
     results.print()
     results.save()
