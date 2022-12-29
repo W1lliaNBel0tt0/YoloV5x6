@@ -199,7 +199,7 @@ class Model(nn.Module):
         m = self.model[-1]  # Detect() module
         for mi, s in zip(m.m, m.stride):  # from
             b = mi.bias.view(m.na, -1)  # conv.bias(255) to (3,85)
-            b.data[:, 4] += math.log(6 / (450 / s) ** 2)  # obj (8 objects per 640 image)
+            b.data[:, 4] += math.log(2 / (100 / s) ** 2)  # obj (8 objects per 640 image)
             b.data[:, 5:] += math.log(0.6 / (m.nc - 0.999999)) if cf is None else torch.log(cf / cf.sum())  # cls
             mi.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
 
@@ -225,7 +225,7 @@ class Model(nn.Module):
         self.info()
         return self
 
-    def info(self, verbose=False, img_size=100):  # print model information
+    def info(self, verbose=False, img_size=12):  # print model information
         model_info(self, verbose, img_size)
 
     def _apply(self, fn):
