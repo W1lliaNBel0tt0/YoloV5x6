@@ -295,7 +295,7 @@ class DetectMultiBackend(nn.Module):
         super().__init__()
         w = str(weights[0] if isinstance(weights, list) else weights)
         pt, jit, onnx, xml, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs = self.model_type(w)  # get backend
-        stride, names = 64, [f'class{i}' for i in range(700)]  # assign defaults
+        stride, names = 64, [f'class{i}' for i in range(300)]  # assign defaults
         w = attempt_download(w)  # download if not local
         fp16 &= (pt or jit or onnx or engine) and device.type != 'cpu'  # FP16
         if data:  # data.yaml path (optional)
@@ -490,7 +490,7 @@ class AutoShape(nn.Module):
     agnostic = False  # NMS class-agnostic
     multi_label = False  # NMS multiple labels per box
     classes = None  # (optional list) filter by class, i.e. = [0, 15, 16] for COCO persons, cats and dogs
-    max_det = 700  # maximum number of detections per image
+    max_det = 300  # maximum number of detections per image
     amp = False  # Automatic Mixed Precision (AMP) inference
 
     def __init__(self, model):
@@ -586,7 +586,7 @@ class Detections:
         self.xyxyn = [x / g for x, g in zip(self.xyxy, gn)]  # xyxy normalized
         self.xywhn = [x / g for x, g in zip(self.xywh, gn)]  # xywh normalized
         self.n = len(self.pred)  # number of images (batch size)
-        self.t = tuple((times[i + 1] - times[i]) * 700 / self.n for i in range(3))  # timestamps (ms)
+        self.t = tuple((times[i + 1] - times[i]) * 300 / self.n for i in range(3))  # timestamps (ms)
         self.s = shape  # inference BCHW shape
 
     def display(self, pprint=False, show=False, save=False, crop=False, render=False, save_dir=Path('')):
