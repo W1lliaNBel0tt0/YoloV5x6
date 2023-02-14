@@ -462,7 +462,7 @@ class DetectMultiBackend(nn.Module):
             y = torch.tensor(y, device=self.device)
         return (y, []) if val else y
 
-    def warmup(self, imgsz=(1, 3, 289, 289)):
+    def warmup(self, imgsz=(1, 3, 280, 280)):
         # Warmup model by running inference once
         if any((self.pt, self.jit, self.onnx, self.engine, self.saved_model, self.pb)):  # warmup types
             if self.device.type != 'cpu':  # only warmup GPU models
@@ -513,7 +513,7 @@ class AutoShape(nn.Module):
         return self
 
     @torch.no_grad()
-    def forward(self, imgs, size=289, augment=False, profile=False):
+    def forward(self, imgs, size=280, augment=False, profile=False):
         # Inference from various sources. For height=640, width=1280, RGB images example inputs are:
         #   file:       imgs = 'data/images/zidane.jpg'  # str or PosixPath
         #   URI:             = 'https://ultralytics.com/images/zidane.jpg'
